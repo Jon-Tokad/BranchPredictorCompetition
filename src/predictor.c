@@ -39,7 +39,8 @@ int verbose;
 //
 
 #define BHT_SIZE (4096)
-uint8_t bht[BHT_SIZE];
+//uint8_t bht[BHT_SIZE];
+uint8_t *bht;
 uint32_t ghr;
 
 //------------------------------------//
@@ -48,16 +49,18 @@ uint32_t ghr;
 
 // Initialize the BHT
 void
-init_bht()
+init_bht(int size)
 {
 
   // Figure out how many bits needed to index into BHT
-  unsigned int tmp = BHT_SIZE;
+  unsigned int tmp = size;
   bhistoryBits = 0;
   while (tmp >>= 1) bhistoryBits++;
 
+  bht = (uint8_t *) malloc(size * sizeof(uint8_t));
+
   // initialize the bht to all weakly not taken
-  for (int i = 0; i < BHT_SIZE; i++) {
+  for (int i = 0; i < size; i++) {
     bht[i] = 1;
   }
 }
@@ -74,12 +77,12 @@ init_predictor()
     case STATIC:
     case BIMODAL:
 
-      init_bht();
+      init_bht(BHT_SIZE);
       break;
 
     case GSHARE:
 
-      init_bht();
+      init_bht(1 << ghistoryBits);
 
       // global history register init
 
@@ -92,11 +95,6 @@ init_predictor()
     default:
       break;
   }
-}
-
-// helper to get the index of the bht from lower order pc bits
-uint32_t getIdx(uint32_t pc) {
-  return pc & ((1 << bhistoryBits) - 1); // Mask for relative bits
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -121,7 +119,7 @@ make_prediction(uint32_t pc)
       // TODO
 
       // use last (bhistoryBits) bits to get the index of BHT
-      idx = getIdx(pc);
+      idx = pc & ((1 << bhistoryBits) - 1);
       //printf("%d\n", idx);
 
       if (bht[idx] == 0 || bht[idx] == 1) return NOTTAKEN;
@@ -134,13 +132,14 @@ make_prediction(uint32_t pc)
 
       // TODO
 
-      ghr &= (1 << ghistoryBits) - 1;
-      idx = (ghr ^ getIdx(pc)) % BHT_SIZE;
+      idx = (pc ^ ghr) & ((1 << ghistoryBits) - 1);
       //printf("%d\n", idx);
-
+//printf("GHR: %d Masked PC: %d XOR Result: %d\n", ghr, (pc & ((1 << ghistoryBits - 1))), idx);
       if (bht[idx] == 0 || bht[idx] == 1) return NOTTAKEN;
       else if (bht[idx] == 2 || bht[idx] == 3) return TAKEN;
       else return NOTTAKEN;
+
+      break;
 
     case TOURNAMENT:
     case CUSTOM:
@@ -170,7 +169,7 @@ train_predictor(uint32_t pc, uint8_t outcome)
     case BIMODAL:
 
       // ensure we don't go lower or higher than strongly (mis)predicted!
-      idx = getIdx(pc);
+      idx = pc & ((1 << bhistoryBits) - 1);
       if (outcome == NOTTAKEN && bht[idx] > 0) bht[idx] -= 1;
       else if (outcome == TAKEN && bht[idx] < 3) bht[idx] += 1;
 
@@ -179,18 +178,19 @@ train_predictor(uint32_t pc, uint8_t outcome)
     case GSHARE:
 
       // update ghr first
-      ghr = (ghr << 1);
-      if (outcome == TAKEN) ghr |= 0x01;
-      ghr &= (1 << ghistoryBits) - 1;
+      // surround with masks
+       //printf("%d ^ %d = %d\n", ghr, getIdx(pc), idx);
 
-      //ghr = ((ghr << 1) | outcome) & ((1 << ghistoryBits) - 1);
-
-      //printf("%d\n", ghr);
-      idx = (ghr ^ getIdx(pc)) % BHT_SIZE;
+      idx = ghr ^ (pc & ((1 << ghistoryBits) - 1));
       //printf("%d\n", idx);
-
       if (outcome == NOTTAKEN && bht[idx] > 0) bht[idx] -= 1;
       else if (outcome == TAKEN && bht[idx] < 3) bht[idx] += 1;
+
+      ghr &= (1 << ghistoryBits) - 1;
+      ghr <<= 1;
+      if (outcome == TAKEN) ghr |= 0x1;
+      ghr &= (1 << ghistoryBits) - 1;
+
 
       break;
 
