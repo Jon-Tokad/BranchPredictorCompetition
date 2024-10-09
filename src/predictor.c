@@ -38,10 +38,29 @@ int verbose;
 //TODO: Add your own Branch Predictor data structures here
 //
 
+#define BHT_SIZE (4096)
+uint8_t bht[BHT_SIZE];
+uint32_t ghr;
 
 //------------------------------------//
 //        Predictor Functions         //
 //------------------------------------//
+
+// Initialize the BHT
+void
+init_bht()
+{
+
+  // Figure out how many bits needed to index into BHT
+  unsigned int tmp = BHT_SIZE;
+  bhistoryBits = 0;
+  while (tmp >>= 1) bhistoryBits++;
+
+  // initialize the bht to all weakly not taken
+  for (int i = 0; i < BHT_SIZE; i++) {
+    bht[i] = 1;
+  }
+}
 
 // Initialize the predictor
 //
@@ -54,12 +73,30 @@ init_predictor()
   switch (bpType) {
     case STATIC:
     case BIMODAL:
+
+      init_bht();
+      break;
+
     case GSHARE:
+
+      init_bht();
+
+      // global history register init
+
+      ghr = 0;
+
+      break;
+
     case TOURNAMENT:
     case CUSTOM:
     default:
       break;
   }
+}
+
+// helper to get the index of the bht from lower order pc bits
+uint32_t getIdx(uint32_t pc) {
+  return pc & ((1 << bhistoryBits) - 1); // Mask for relative bits
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -72,13 +109,39 @@ make_prediction(uint32_t pc)
   //
   //TODO: Implement prediction scheme
   //
+  uint32_t idx;
+
 
   // Make a prediction based on the bpType
   switch (bpType) {
     case STATIC:
       return TAKEN;
     case BIMODAL:
+
+      // TODO
+
+      // use last (bhistoryBits) bits to get the index of BHT
+      idx = getIdx(pc);
+      //printf("%d\n", idx);
+
+      if (bht[idx] == 0 || bht[idx] == 1) return NOTTAKEN;
+      else if (bht[idx] == 2 || bht[idx] == 3) return TAKEN;
+      else return NOTTAKEN;
+
+      break;
+
     case GSHARE:
+
+      // TODO
+
+      ghr &= (1 << ghistoryBits) - 1;
+      idx = (ghr ^ getIdx(pc)) % BHT_SIZE;
+      //printf("%d\n", idx);
+
+      if (bht[idx] == 0 || bht[idx] == 1) return NOTTAKEN;
+      else if (bht[idx] == 2 || bht[idx] == 3) return TAKEN;
+      else return NOTTAKEN;
+
     case TOURNAMENT:
     case CUSTOM:
     default:
@@ -99,4 +162,41 @@ train_predictor(uint32_t pc, uint8_t outcome)
   //
   //TODO: Implement Predictor training
   //
+
+  uint32_t idx;
+
+  switch (bpType) {
+    case STATIC:
+    case BIMODAL:
+
+      // ensure we don't go lower or higher than strongly (mis)predicted!
+      idx = getIdx(pc);
+      if (outcome == NOTTAKEN && bht[idx] > 0) bht[idx] -= 1;
+      else if (outcome == TAKEN && bht[idx] < 3) bht[idx] += 1;
+
+      break;
+
+    case GSHARE:
+
+      // update ghr first
+      ghr = (ghr << 1);
+      if (outcome == TAKEN) ghr |= 0x01;
+      ghr &= (1 << ghistoryBits) - 1;
+
+      //ghr = ((ghr << 1) | outcome) & ((1 << ghistoryBits) - 1);
+
+      //printf("%d\n", ghr);
+      idx = (ghr ^ getIdx(pc)) % BHT_SIZE;
+      //printf("%d\n", idx);
+
+      if (outcome == NOTTAKEN && bht[idx] > 0) bht[idx] -= 1;
+      else if (outcome == TAKEN && bht[idx] < 3) bht[idx] += 1;
+
+      break;
+
+    case TOURNAMENT:
+    case CUSTOM:
+    default:
+      break;
+  }
 }
